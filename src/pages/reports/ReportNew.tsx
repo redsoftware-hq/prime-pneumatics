@@ -3,16 +3,15 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { Layout } from '../../components/Layout'
 import { SuggestInput } from '../../components/SuggestInput'
-import { SparePartPicker } from '../../components/SparePartPicker'
+import { ReportPartsEditor, type TrackedPartField } from '../../components/ReportPartsEditor'
 import { useEngineerSuggestions } from '../../hooks/useEngineerSuggestions'
-import { toISODate, toDisplayDate, today } from '../../utils/dateEngine'
-import { calcRemaining, addDaysToDate, type PartState } from '../../utils/machineParts'
+import { today } from '../../utils/dateEngine'
+import { buildSnapshot, buildMachineState, type TrackedPart } from '../../utils/reportSnapshot'
 import { alphanumericOnly } from '../../utils/validate'
 
 type SparePart = { id: string; code: string; name: string; size: string | null }
 type ServiceInfo = { id: string; fab_number: string; model_number: string | null; customer_id: string }
 type ExistingMachine = { id: string; fab_number: string; model_number: string | null; sponsor: string | null }
-type TrackedPart = { spare_part_id: string; code: string; name: string; size: string | null; qty: string; hours_per_day: string; remaining_hrs: string; maintenance_days: string }
 
 export function ReportNew() {
   const { id: routeServiceId, customerId: routeCustomerId } = useParams<{ id?: string; customerId?: string }>()
@@ -106,7 +105,7 @@ export function ReportNew() {
     setTrackedParts(prev => prev.filter(tp => tp.spare_part_id !== spare_part_id))
   }
 
-  function updateTrackedPart(spare_part_id: string, field: 'qty' | 'hours_per_day' | 'remaining_hrs' | 'maintenance_days', value: string) {
+  function updateTrackedPart(spare_part_id: string, field: TrackedPartField, value: string) {
     setTrackedParts(prev => prev.map(tp => tp.spare_part_id === spare_part_id ? { ...tp, [field]: value } : tp))
   }
 
@@ -123,7 +122,7 @@ export function ReportNew() {
       if (fabNumber.trim() !== service.fab_number) {
         const { error: fabUpdateError } = await supabase
           .from('services')
-          .update({ fab_number: fabNumber.trim(), updated_at: new Date().toISOString() })
+          .update({ fab_number: fabNumber.trim() })
           .eq('id', service.id)
         if (fabUpdateError) {
           setError(fabUpdateError.code === '23505' ? 'A machine with this FAB Number already exists.' : 'Failed to update FAB number.')
@@ -139,7 +138,6 @@ export function ReportNew() {
             fab_number: fabNumber.trim(),
             model_number: modelNumber.trim() || null,
             sponsor: sponsor.trim() || null,
-            updated_at: new Date().toISOString(),
           })
           .eq('id', matchedMachine.id)
         if (updateError) {
@@ -171,30 +169,8 @@ export function ReportNew() {
       return
     }
 
-    const { data: { user } } = await supabase.auth.getUser()
-
     const hoursRun = parseFloat(totalRunHours) || 0
-
-    let earliestDue: Date | null = null
-    const snapshotRows = trackedParts.map(tp => {
-      const remaining = Math.max(0, parseFloat(tp.remaining_hrs) || 0)
-      const hoursPerDay = Math.max(1, parseInt(tp.hours_per_day) || 24)
-      const p: PartState = { hours_run: hoursRun, next_hours: hoursRun + remaining, hours_per_day: hoursPerDay }
-      const offDays = Math.max(0, parseInt(tp.maintenance_days) || 0)
-      const { remainingHours, days } = calcRemaining(p)
-      const dueDate = addDaysToDate(new Date(reportDate), Math.max(0, days) + offDays)
-      if (!earliestDue || dueDate < earliestDue) earliestDue = dueDate
-      return {
-        spare_part_id: tp.spare_part_id,
-        qty: Math.max(1, parseInt(tp.qty) || 1),
-        hours_run: p.hours_run,
-        next_hours: p.next_hours,
-        hours_per_day: p.hours_per_day,
-        remaining_hours: remainingHours,
-        due_date: toISODate(dueDate),
-        maintenance_days: offDays,
-      }
-    })
+    const { rows: snapshotRows, earliestDue } = buildSnapshot(trackedParts, hoursRun, reportDate)
 
     const { data: report, error: reportError } = await supabase
       .from('service_reports')
@@ -204,8 +180,9 @@ export function ReportNew() {
         total_run_hours: hoursRun,
         remarks: remarks.trim(),
         serviced_by: servicedBy.trim(),
-        due_service_date: earliestDue ? toISODate(earliestDue) : null,
-        filed_by_id: user?.id ?? null,
+        // filed_by_id / filed_by_name are stamped by a BEFORE INSERT trigger
+        // from auth.uid() (migration 0021), not sent from here.
+        due_service_date: earliestDue,
       })
       .select('id')
       .single()
@@ -227,17 +204,7 @@ export function ReportNew() {
       }
 
       await supabase.from('service_machine_parts').upsert(
-        trackedParts.map(tp => {
-          const remaining = Math.max(0, parseFloat(tp.remaining_hrs) || 0)
-          return {
-            service_id: resolvedServiceId,
-            spare_part_id: tp.spare_part_id,
-            hours_run: hoursRun,
-            next_hours: hoursRun + remaining,
-            hours_per_day: Math.max(1, parseInt(tp.hours_per_day) || 24),
-            updated_at: new Date().toISOString(),
-          }
-        }),
+        buildMachineState(trackedParts, resolvedServiceId, hoursRun),
         { onConflict: 'service_id,spare_part_id' }
       )
     }
@@ -335,72 +302,15 @@ export function ReportNew() {
           </div>
 
           {/* Spare item hours — dynamic, add from the spare parts list */}
-          <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
-            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Spare Item Hours</h3>
-            <SparePartPicker
-              parts={spareParts}
-              excludeIds={trackedParts.map(tp => tp.spare_part_id)}
-              onSelect={addTrackedPart}
-              placeholder="Search spare parts by code or name..."
-            />
-
-            {trackedParts.length === 0 ? (
-              <p className="text-xs text-gray-400">No spare parts added for this report yet.</p>
-            ) : (
-              trackedParts.map(tp => {
-                const hoursRunPreview = parseFloat(totalRunHours) || 0
-                const remainingPreview = Math.max(0, parseFloat(tp.remaining_hrs) || 0)
-                const effective: PartState = { hours_run: hoursRunPreview, next_hours: hoursRunPreview + remainingPreview, hours_per_day: Math.max(1, parseInt(tp.hours_per_day) || 24) }
-                const { remainingHours, days } = calcRemaining(effective)
-                const overdue = remainingHours <= 0
-                const offDays = Math.max(0, parseInt(tp.maintenance_days) || 0)
-                return (
-                  <div key={tp.spare_part_id} className="border-t border-gray-100 pt-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-medium text-gray-800">
-                        <span className="font-mono text-gray-400 text-xs mr-1">{tp.code}</span>{tp.name}
-                        {tp.size && <span className="text-gray-400 text-xs ml-1">({tp.size})</span>}
-                      </p>
-                      <button type="button" onClick={() => removeTrackedPart(tp.spare_part_id)}
-                        className="text-red-400 hover:text-red-600 text-xs">×</button>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 mb-2">
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Qty</label>
-                        <input type="number" min="1" value={tp.qty}
-                          onChange={e => updateTrackedPart(tp.spare_part_id, 'qty', e.target.value)}
-                          className="w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Remaining Hrs</label>
-                        <input type="number" min="0" value={tp.remaining_hrs}
-                          onChange={e => updateTrackedPart(tp.spare_part_id, 'remaining_hrs', e.target.value)}
-                          className="w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Hrs/Day</label>
-                        <input type="number" min="1" value={tp.hours_per_day}
-                          onChange={e => updateTrackedPart(tp.spare_part_id, 'hours_per_day', e.target.value)}
-                          className="w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                      </div>
-                    </div>
-                    <div className="mb-2">
-                      <label className="block text-xs text-gray-500 mb-1">Maintenance Days</label>
-                      <input type="number" min="0" value={tp.maintenance_days}
-                        onChange={e => updateTrackedPart(tp.spare_part_id, 'maintenance_days', e.target.value)}
-                        className="w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                      <p className="text-xs text-gray-400 mt-1">Planned off days for this part (e.g. plant shutdown), added on top of its calculated due date.</p>
-                    </div>
-                    <p className={`text-xs ${overdue ? 'text-red-600 font-medium' : 'text-blue-600'}`}>
-                      {overdue
-                        ? `Overdue by ${Math.abs(remainingHours)} hrs`
-                        : `${remainingHours} hrs remaining · ~${Math.ceil(days)} days · due ${toDisplayDate(toISODate(addDaysToDate(new Date(reportDate), days + offDays)))}`}
-                    </p>
-                  </div>
-                )
-              })
-            )}
-          </div>
+          <ReportPartsEditor
+            spareParts={spareParts}
+            trackedParts={trackedParts}
+            reportDate={reportDate}
+            totalRunHours={totalRunHours}
+            onAdd={addTrackedPart}
+            onRemove={removeTrackedPart}
+            onUpdate={updateTrackedPart}
+          />
 
           {/* Remarks */}
           <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">

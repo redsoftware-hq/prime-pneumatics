@@ -40,3 +40,16 @@ export function toDisplayDate(isoDate: string): string {
   const [y, m, d] = isoDate.split('-')
   return `${d}-${m}-${y}`
 }
+
+// For timestamptz values (edited_at and friends), rendered in the viewer's
+// local time. Kept separate from toDisplayDate, which takes a plain
+// YYYY-MM-DD calendar date with no time or zone to reason about — passing a
+// timestamp through that would show the UTC day, which near midnight IST is
+// the wrong one.
+export function toDisplayDateTime(timestamp: string): string {
+  if (!timestamp) return '—'
+  const d = new Date(timestamp)
+  if (Number.isNaN(d.getTime())) return '—'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}

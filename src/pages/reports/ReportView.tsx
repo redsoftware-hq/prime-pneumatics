@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { toDisplayDate, today } from '../../utils/dateEngine'
+import { toDisplayDate, toDisplayDateTime, today } from '../../utils/dateEngine'
 import { srNum } from '../../utils/reportNumber'
 import { downloadPdf } from '../../utils/downloadPdf'
 import { Layout } from '../../components/Layout'
@@ -29,6 +29,10 @@ type Report = {
   remarks: string
   serviced_by: string | null
   due_service_date: string | null
+  filed_by_name: string | null
+  edited_by_name: string | null
+  edited_at: string | null
+  edit_count: number
   service: { fab_number: string; model_number: string | null; sponsor: string | null; customer: { id: string; name: string; org: string; address: string; phone: string; gst: string } }
 }
 
@@ -240,7 +244,11 @@ export function ReportView() {
               {report.report_number && <p className="text-xs text-gray-400 font-mono">{srNum(report.report_number)}</p>}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+            <Link to={`/reports/${report.id}/edit`}
+              className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors flex items-center justify-center">
+              Edit
+            </Link>
             <Link to={`/reports/new/${report.service.customer.id}`}
               className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors flex items-center justify-center">
               File Report
@@ -277,6 +285,22 @@ export function ReportView() {
             </div>
           </div>
         </div>
+
+        {/* Audit trail. Deliberately outside printRef — the PDF is an
+            html2canvas capture of that subtree, so keeping this out of it is
+            what guarantees the trail never reaches a customer's copy. */}
+        {(report.filed_by_name || report.edited_by_name) && (
+          <p className="text-xs text-gray-400 mb-4 no-print">
+            {report.filed_by_name && <>Filed by <span className="text-gray-600">{report.filed_by_name}</span></>}
+            {report.edited_by_name && report.edited_at && (
+              <>
+                {report.filed_by_name ? ' · ' : ''}
+                Last edited by <span className="text-gray-600">{report.edited_by_name}</span> on {toDisplayDateTime(report.edited_at)}
+                {report.edit_count > 1 ? ` (${report.edit_count} edits)` : ''}
+              </>
+            )}
+          </p>
+        )}
 
         {isAdmin && (
           <button

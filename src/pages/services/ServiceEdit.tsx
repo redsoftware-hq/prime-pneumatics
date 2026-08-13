@@ -54,7 +54,7 @@ export function ServiceEdit() {
         fab_number: form.fab_number.trim(),
         model_number: form.model_number.trim() || null,
         sponsor: form.sponsor.trim() || null,
-        updated_at: new Date().toISOString(),
+        // updated_at and the edit trail are stamped by triggers (0022).
       })
       .eq('id', id)
 

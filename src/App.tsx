@@ -12,6 +12,7 @@ import { ServiceDetail } from './pages/services/ServiceDetail'
 import { ServiceEdit } from './pages/services/ServiceEdit'
 import { ServiceReports } from './pages/services/ServiceReports'
 import { ReportNew } from './pages/reports/ReportNew'
+import { ReportEdit } from './pages/reports/ReportEdit'
 import { ReportView } from './pages/reports/ReportView'
 import { SearchReports } from './pages/reports/SearchReports'
 import { InviteEngineer } from './pages/admin/InviteEngineer'
@@ -37,12 +38,13 @@ export default function App() {
         <Route path="/customers/:id/reports" element={<ProtectedRoute adminOnly><CustomerReports /></ProtectedRoute>} />
 
         <Route path="/services/:id" element={<ProtectedRoute><ServiceDetail /></ProtectedRoute>} />
-        <Route path="/services/:id/edit" element={<ProtectedRoute adminOnly><ServiceEdit /></ProtectedRoute>} />
+        <Route path="/services/:id/edit" element={<ProtectedRoute><ServiceEdit /></ProtectedRoute>} />
         <Route path="/services/:id/reports" element={<ProtectedRoute><ServiceReports /></ProtectedRoute>} />
         <Route path="/services/:id/reports/new" element={<ProtectedRoute><ReportNew /></ProtectedRoute>} />
 
         <Route path="/reports/new/:customerId" element={<ProtectedRoute><ReportNew /></ProtectedRoute>} />
         <Route path="/reports/:id" element={<ProtectedRoute><ReportView /></ProtectedRoute>} />
+        <Route path="/reports/:id/edit" element={<ProtectedRoute><ReportEdit /></ProtectedRoute>} />
         <Route path="/search" element={<ProtectedRoute><SearchReports /></ProtectedRoute>} />
 
         <Route path="/admin/invite" element={<ProtectedRoute adminOnly><InviteEngineer /></ProtectedRoute>} />
