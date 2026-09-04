@@ -50,12 +50,14 @@ export function Dashboard() {
         .select(selectCols)
         .gte('due_service_date', weekStart)
         .lte('due_service_date', weekEnd)
+        .is('service_done_at', null)
         .order('due_service_date', { ascending: true })
       const pastQuery = supabase
         .from('service_reports')
         .select(selectCols)
         .gte('due_service_date', ninetyDaysAgoStr)
         .lt('due_service_date', weekStart)
+        .is('service_done_at', null)
         .order('due_service_date', { ascending: false })
 
       const [{ data: weekData }, { data: pastData }, { data: settingData }] = await Promise.all([
@@ -78,6 +80,20 @@ export function Dashboard() {
 
   const todayStr = today()
   const services = tab === 'week' ? weekServices : pastServices
+
+  async function markDone(reportId: string) {
+    if (!window.confirm('Mark this service as done? It will be removed from the dashboard.')) return
+    const { error } = await supabase
+      .from('service_reports')
+      .update({ service_done_at: new Date().toISOString() })
+      .eq('id', reportId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setWeekServices(prev => prev.filter(s => s.id !== reportId))
+    setPastServices(prev => prev.filter(s => s.id !== reportId))
+  }
 
   return (
     <Layout>
@@ -192,6 +208,12 @@ export function Dashboard() {
                   >
                     Remind
                   </a>
+                  <button
+                    onClick={() => markDone(s.id)}
+                    className="flex-1 py-2 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-semibold text-center"
+                  >
+                    Done
+                  </button>
                 </div>
               </div>
             )
